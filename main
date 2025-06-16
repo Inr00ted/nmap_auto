@@ -1,0 +1,91 @@
+import subprocess
+import datetime
+import os
+import argparse
+import sys
+import multiprocessing
+
+# Define Nmap profiles
+NMAP_PROFILES = {
+    "quick": [
+        "-sS", "-sV", "--top-ports", "100", "-T4"
+    ],
+    "full": [
+        "-sS", "-sV", "-O", "-A", "-p-", "-T4", "--script", "vuln"
+    ],
+    "vuln": [
+        "-sS", "-sV", "-O", "-A", "--script", "vuln", "-T4"
+    ],
+    "web": [
+        "-sS", "-sV", "-T4", "--script", "http*"
+    ],
+    "stealth": [
+        "-sS", "-Pn", "-T2", "--max-retries", "1", "--min-rate", "10", "--data-length", "50",
+        "--source-port", "53", "--spoof-mac", "0", "-f"
+    ],
+    "custom": [
+        # You can add custom Nmap flags here, or let user provide them as args
+    ]
+}
+
+def build_nmap_command(target, profile, output_dir, ports=None, custom_args=None):
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_target = target.replace("/", "_")
+    output_file = f"{output_dir}/nmap_{profile}_{safe_target}_{timestamp}.txt"
+    cmd = ["nmap"] + NMAP_PROFILES[profile]
+    if ports:
+        cmd += ["-p", ports]
+    if custom_args:
+        cmd += custom_args
+    cmd += ["-oN", output_file, target]
+    return cmd, output_file
+
+def run_nmap_scan(target, profile, output_dir, ports=None, custom_args=None):
+    os.makedirs(output_dir, exist_ok=True)
+    cmd, outfile = build_nmap_command(target, profile, output_dir, ports, custom_args)
+    print(f"[+] Running Nmap on {target} with profile '{profile}'...")
+    print("    Command:", " ".join(cmd))
+    try:
+        subprocess.run(cmd, check=True)
+        print(f"[+] Scan for {target} complete! Output: {outfile}")
+    except subprocess.CalledProcessError as e:
+        print(f"[-] Scan error for {target}: {e}")
+    return outfile
+
+def process_target(args_tuple):
+    target, args = args_tuple
+    run_nmap_scan(target, args.profile, args.output_dir, args.ports, args.custom_args)
+
+def read_targets(input_file):
+    with open(input_file, "r") as f:
+        return [line.strip() for line in f if line.strip()]
+
+def main():
+    parser = argparse.ArgumentParser(description="Ultimate Nmap Automation Tool")
+    parser.add_argument("-t", "--target", help="Target IP/domain")
+    parser.add_argument("-i", "--input", help="Input file with targets (one per line)")
+    parser.add_argument("-p", "--profile", choices=list(NMAP_PROFILES.keys()), default="quick", help="Nmap scan profile")
+    parser.add_argument("--ports", help="Specify ports to scan (e.g. 22,80,443 or 1-1000)")
+    parser.add_argument("--custom-args", nargs=argparse.REMAINDER, help="Custom Nmap args (advanced users)")
+    parser.add_argument("-o", "--output_dir", default="nmap_reports", help="Directory for output reports")
+    parser.add_argument("--threads", type=int, default=2, help="Parallel scans (default 2)")
+    args = parser.parse_args()
+
+    if args.input:
+        targets = read_targets(args.input)
+    elif args.target:
+        targets = [args.target]
+    else:
+        print("[-] Provide a target (-t) or input file (-i).")
+        sys.exit(1)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    args_list = [(target, args) for target in targets]
+
+    with multiprocessing.Pool(args.threads) as pool:
+        pool.map(process_target, args_list)
+
+    print("[*] All scans complete.")
+
+if __name__ == "__main__":
+    main()
